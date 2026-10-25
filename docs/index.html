@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VulnLens — Your dependencies have CVEs. Do you know which ones?</title>
+<meta name="description" content="VulnLens is a zero-dependency Java CLI that X-rays a Maven project's supply chain against the live OSV.dev vulnerability database: 0–100 risk score, severity heatmap, per-dependency CVE table with fix suggestions.">
+<style>
+  :root{
+    --bg:#0a0b0d; --panel:#101315; --panel2:#151a1d; --line:#232b2f;
+    --text:#eef2f3; --muted:#94a1a7;
+    --red:#f43f5e; --red-hi:#fb7185; --amber:#f59e0b; --emerald:#34d399;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6;position:relative}
+  /* subtle grid + glow backdrop */
+  body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:linear-gradient(rgba(244,63,94,.055) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(244,63,94,.055) 1px,transparent 1px);
+    background-size:44px 44px;
+    -webkit-mask-image:radial-gradient(ellipse 90% 62% at 50% 0%,#000 25%,transparent 78%);
+            mask-image:radial-gradient(ellipse 90% 62% at 50% 0%,#000 25%,transparent 78%)}
+  body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(640px 320px at 50% -40px,rgba(244,63,94,.13),transparent 70%),
+               radial-gradient(520px 300px at 88% 30%,rgba(245,158,11,.05),transparent 70%)}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+  a{color:var(--red-hi);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:50;display:flex;justify-content:space-between;align-items:center;
+    padding:16px 0;background:rgba(10,11,13,.82);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:19px;color:var(--text);letter-spacing:-.2px}
+  .brand:hover{text-decoration:none}
+  .nav-links{display:flex;align-items:center;gap:26px}
+  .nav-links a{color:var(--muted);font-size:15px;transition:color .18s}
+  .nav-links a:hover{color:var(--text);text-decoration:none}
+  .gh-btn{background:var(--panel);border:1px solid var(--line);color:var(--text)!important;
+    padding:8px 16px;border-radius:8px;font-weight:600;transition:border-color .18s,box-shadow .18s}
+  .gh-btn:hover{border-color:var(--red);box-shadow:0 0 14px rgba(244,63,94,.25);text-decoration:none}
+
+  /* ---------- hero ---------- */
+  .hero{padding:84px 0 8px;text-align:center}
+  .eyebrow{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:13px;
+    color:var(--muted);border:1px solid var(--line);background:var(--panel);
+    padding:7px 16px;border-radius:999px;margin-bottom:26px}
+  .eyebrow .pulse{width:8px;height:8px;border-radius:50%;background:var(--red);
+    box-shadow:0 0 10px var(--red);animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.8)}}
+  .hero h1{font-size:54px;line-height:1.1;letter-spacing:-1.2px;font-weight:800;max-width:800px;margin:0 auto}
+  .hero h1 .grad{background:linear-gradient(92deg,var(--red-hi),var(--amber));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{color:var(--muted);font-size:20px;max-width:700px;margin:24px auto 36px}
+  .lede b{color:var(--text);font-weight:600}
+  .cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .btn{padding:13px 28px;border-radius:9px;font-weight:600;font-size:16px;display:inline-block;transition:transform .15s,box-shadow .18s,background .18s}
+  .btn:hover{text-decoration:none;transform:translateY(-1px)}
+  .btn-primary{background:linear-gradient(135deg,var(--red),#e11d48);color:#fff;
+    box-shadow:0 8px 28px rgba(244,63,94,.35)}
+  .btn-primary:hover{background:linear-gradient(135deg,var(--red-hi),var(--red));box-shadow:0 10px 34px rgba(244,63,94,.5)}
+  .btn-ghost{border:1px solid var(--line);color:var(--text);background:var(--panel)}
+  .btn-ghost:hover{border-color:var(--red);box-shadow:0 0 16px rgba(244,63,94,.2)}
+
+  .stats{display:flex;justify-content:center;margin:48px auto 0;max-width:820px;
+    border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
+  .stat{flex:1;padding:18px 8px;text-align:center;border-right:1px solid var(--line)}
+  .stat:last-child{border-right:none}
+  .stat b{display:block;font-size:24px;color:var(--text);font-family:var(--mono)}
+  .stat span{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.6px}
+
+  /* ---------- terminal ---------- */
+  .terminal{background:#0a0e10;border:1px solid var(--line);border-radius:12px;margin:48px auto;
+    max-width:880px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5),0 0 44px rgba(244,63,94,.07);
+    position:relative}
+  .term-bar{display:flex;gap:8px;align-items:center;padding:12px 16px;background:var(--panel2);border-bottom:1px solid var(--line)}
+  .term-bar span.dot{width:12px;height:12px;border-radius:50%}
+  .term-bar .t{color:var(--muted);font-size:13px;margin-left:8px;font-family:var(--mono)}
+  .scanline{position:absolute;left:0;right:0;top:0;height:2px;z-index:2;pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(244,63,94,.9),transparent);
+    box-shadow:0 0 18px 2px rgba(244,63,94,.55);opacity:0}
+  .scanline.run{animation:scan 1.4s ease-out 1}
+  @keyframes scan{0%{top:0;opacity:0}8%{opacity:1}85%{opacity:1}100%{top:calc(100% - 2px);opacity:0}}
+  .gauge-row{display:flex;align-items:center;gap:26px;padding:22px 26px 6px;flex-wrap:wrap}
+  .gauge-cap{flex:1;min-width:220px}
+  .gauge-cap h4{font-family:var(--mono);font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{font-family:var(--mono);font-size:12px;padding:5px 12px;border-radius:999px;border:1px solid}
+  .chip.crit{color:var(--red-hi);border-color:rgba(244,63,94,.5);background:rgba(244,63,94,.1)}
+  .chip.high{color:var(--amber);border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.08)}
+  .chip.med{color:#fbbf24;border-color:rgba(251,191,36,.3);background:rgba(251,191,36,.05)}
+  .chip.low{color:var(--muted);border-color:var(--line);background:var(--panel)}
+  .chip.clean{color:var(--emerald);border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.08)}
+  .terminal pre{padding:16px 26px 24px;font-family:var(--mono);font-size:13px;line-height:1.7;
+    overflow-x:auto;color:#c9d6e2;white-space:pre}
+  .t-cmd{color:#fff;font-weight:600}
+  .t-dim{color:#5f7285}
+  .t-crit{color:var(--red-hi);font-weight:700}
+  .t-high{color:var(--amber)}
+  .t-fix{color:var(--emerald)}
+  .t-score{color:#fff;font-weight:700}
+
+  /* ---------- sections ---------- */
+  section{padding:56px 0}
+  h2{font-size:31px;letter-spacing:-.6px;margin-bottom:10px;text-align:center;font-weight:800}
+  h2 .grad{background:linear-gradient(92deg,var(--red-hi),var(--amber));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{color:var(--muted);text-align:center;max-width:660px;margin:0 auto 40px;font-size:16.5px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;
+    transition:transform .18s,border-color .18s,box-shadow .18s}
+  .card:hover{transform:translateY(-3px);border-color:rgba(244,63,94,.45);box-shadow:0 14px 34px rgba(0,0,0,.4),0 0 20px rgba(244,63,94,.08)}
+  .card .icon{font-size:26px;margin-bottom:12px}
+  .card h3{font-size:17px;margin-bottom:8px;letter-spacing:-.2px}
+  .card p{color:var(--muted);font-size:14.5px}
+  .card code,.step code{font-family:var(--mono);font-size:13px;color:var(--red-hi);background:rgba(244,63,94,.08);padding:1px 6px;border-radius:5px}
+
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;counter-reset:step}
+  .step{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;position:relative;
+    transition:border-color .18s,transform .18s}
+  .step:hover{border-color:rgba(244,63,94,.45);transform:translateY(-3px)}
+  .step::before{counter-increment:step;content:counter(step);display:flex;align-items:center;justify-content:center;
+    width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--red),#b91c1c);
+    color:#fff;font-weight:800;margin-bottom:16px;font-family:var(--mono);font-size:15px;
+    box-shadow:0 0 16px rgba(244,63,94,.4)}
+  .step h3{font-size:16px;margin-bottom:8px;font-family:var(--mono)}
+  .step p{color:var(--muted);font-size:14.5px}
+
+  /* ---------- findings table ---------- */
+  .table-wrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    max-width:880px;margin:0 auto;box-shadow:0 24px 60px rgba(0,0,0,.4)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  thead th{font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:1px;
+    color:var(--muted);text-align:left;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  tbody td{padding:14px 18px;border-bottom:1px solid var(--line);vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr{transition:background .15s}
+  tbody tr:hover{background:rgba(244,63,94,.045)}
+  td.pkg{font-family:var(--mono);color:var(--text);white-space:nowrap}
+  td.ver{font-family:var(--mono);color:var(--muted);white-space:nowrap}
+  td.cve a{font-family:var(--mono);font-size:13px;white-space:nowrap}
+  td.fix{font-family:var(--mono);color:var(--emerald);white-space:nowrap}
+  .sev{font-family:var(--mono);font-size:12px;font-weight:700;padding:4px 10px;border-radius:6px;white-space:nowrap}
+  .sev.critical{color:#fff;background:linear-gradient(135deg,var(--red),#b91c1c);box-shadow:0 0 12px rgba(244,63,94,.45)}
+  .report-link{display:block;text-align:center;margin-top:26px;font-family:var(--mono);font-size:15px}
+
+  /* ---------- codeblock ---------- */
+  .codeblock{background:#0a0e10;border:1px solid var(--line);border-radius:12px;padding:22px 24px;
+    font-family:var(--mono);font-size:13.5px;line-height:1.75;overflow-x:auto;white-space:pre;
+    color:#c9d6e2;max-width:880px;margin:0 auto;position:relative;box-shadow:0 24px 60px rgba(0,0,0,.4)}
+  .codeblock .t-dim{color:#5f7285}
+  .codeblock .t-fix{color:var(--emerald)}
+  .copy{position:absolute;top:12px;right:12px;background:var(--panel2);border:1px solid var(--line);
+    color:var(--muted);font-family:var(--mono);font-size:12px;padding:6px 12px;border-radius:7px;cursor:pointer}
+  .copy:hover{color:var(--text);border-color:var(--red)}
+
+  footer{border-top:1px solid var(--line);padding:36px 0 48px;text-align:center;color:var(--muted);font-size:14.5px;margin-top:20px}
+  footer .arc{margin-top:8px;font-size:13px;color:#6b7880}
+
+  /* reveal on scroll */
+  .reveal{opacity:0;transform:translateY(20px);transition:opacity .6s ease,transform .6s ease}
+  .reveal.in{opacity:1;transform:none}
+
+  @media(max-width:760px){
+    .hero h1{font-size:38px}
+    .stats{flex-wrap:wrap}.stat{min-width:40%;border-bottom:1px solid var(--line)}
+    .nav-links a:not(.gh-btn){display:none}
+    .terminal pre{font-size:12px;padding:14px 16px 20px}
+    .gauge-row{padding:16px 16px 4px}
+    thead th:nth-child(2),tbody td:nth-child(2){display:none}
+  }
+  @media(prefers-reduced-motion:reduce){
+    .reveal{opacity:1;transform:none}
+    .eyebrow .pulse{animation:none}
+    html{scroll-behavior:auto}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav>
+    <a class="brand" href="#">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 2l8 3v6c0 5-3.5 9.3-8 11-4.5-1.7-8-6-8-11V5l8-3z" stroke="#f43f5e" stroke-width="2" stroke-linejoin="round"/>
+        <circle cx="12" cy="10.5" r="3.2" stroke="#fb7185" stroke-width="1.6"/>
+        <line x1="14.3" y1="12.8" x2="17" y2="15.5" stroke="#fb7185" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      VulnLens
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#findings">Sample findings</a>
+      <a class="gh-btn" href="https://github.com/judd69/vulnlens" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="eyebrow"><span class="pulse"></span>Zero-dependency Java CLI · Day 6 of the Lens arc</div>
+    <h1>Your dependencies have CVEs.<br><span class="grad">Do you know which ones?</span></h1>
+    <p class="lede">VulnLens reads any Maven <b>pom.xml</b>, batches every resolved dependency against the <b>live OSV.dev database</b>, and tells you exactly which packages are carrying known vulnerabilities — with a <b>0–100 risk score</b>, a severity heatmap, and the upgrade that fixes each one.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="sample-report.html">See a real sample report</a>
+      <a class="btn btn-ghost" href="https://github.com/judd69/vulnlens" target="_blank" rel="noopener">Star on GitHub</a>
+    </div>
+    <div class="stats reveal">
+      <div class="stat"><b>0</b><span>dependencies</span></div>
+      <div class="stat"><b>0–100</b><span>risk score</span></div>
+      <div class="stat"><b>3</b><span>report formats</span></div>
+      <div class="stat"><b>--fail-on</b><span>CI exit codes</span></div>
+    </div>
+  </header>
+</div>
+
+<div class="wrap">
+  <div class="terminal reveal" id="heroTerminal">
+    <div class="scanline" id="scanline"></div>
+    <div class="term-bar">
+      <span class="dot" style="background:#ff5f57"></span>
+      <span class="dot" style="background:#febc2e"></span>
+      <span class="dot" style="background:#28c840"></span>
+      <span class="t">terminal — vulnlens scan</span>
+    </div>
+    <div class="gauge-row">
+      <svg id="gauge" width="210" height="124" viewBox="0 0 210 124" role="img" aria-label="Risk gauge: 87 out of 100">
+        <defs>
+          <linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#34d399"/>
+            <stop offset=".55" stop-color="#f59e0b"/>
+            <stop offset="1" stop-color="#f43f5e"/>
+          </linearGradient>
+        </defs>
+        <path d="M20 104 A85 85 0 0 1 190 104" fill="none" stroke="#232b2f" stroke-width="14" stroke-linecap="round"/>
+        <path id="gaugeArc" d="M20 104 A85 85 0 0 1 190 104" fill="none" stroke="url(#gaugeGrad)" stroke-width="14" stroke-linecap="round"/>
+        <line id="needle" x1="105" y1="104" x2="105" y2="42" stroke="#eef2f3" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="105" cy="104" r="6" fill="#eef2f3"/>
+        <text id="gaugeText" x="105" y="124" text-anchor="middle" fill="#eef2f3" font-size="17" font-weight="700" font-family="ui-monospace,monospace">0</text>
+      </svg>
+      <div class="gauge-cap">
+        <h4>severity breakdown</h4>
+        <div class="chips">
+          <span class="chip crit">5 critical</span>
+          <span class="chip high">0 high</span>
+          <span class="chip med">0 medium</span>
+          <span class="chip low">0 low</span>
+          <span class="chip clean">119 clean</span>
+        </div>
+      </div>
+    </div>
+<pre><span class="t-cmd">$ java -jar vulnlens.jar pom.xml</span>
+
+<span class="t-dim">VulnLens: resolved 124 packages from pom.xml (19 direct, 105 transitive)</span>
+<span class="t-dim">Querying OSV.dev … 1 batch request, 124 packages</span>
+
+  risk score  <span class="t-score">87/100</span>   grade <span class="t-crit">F</span>
+
+  <span class="t-crit">CRITICAL 10.0</span>  log4j-core <span class="t-dim">2.14.1</span>          CVE-2021-44228
+      <span class="t-fix">→</span> upgrade log4j-core <span class="t-dim">2.14.1 →</span> <span class="t-fix">2.17.1</span>
+  <span class="t-crit">CRITICAL  9.8</span>  commons-text <span class="t-dim">1.9</span>          CVE-2022-42889
+      <span class="t-fix">→</span> upgrade commons-text <span class="t-dim">1.9 →</span> <span class="t-fix">1.10.0</span>
+
+  <span class="t-dim">… 3 more findings in the full report</span>
+<span class="t-fix">wrote vulnlens-report.html</span>  <span class="t-dim">· json · text</span></pre>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <section id="problem">
+    <h2>The problem <span class="grad">isn't zero-days</span></h2>
+    <p class="sub">Breaches rarely come from exotic new exploits. They come from old, public, already-patched CVEs sitting in dependency trees nobody audited.</p>
+    <div class="grid">
+      <div class="card reveal">
+        <div class="icon">🎯</div>
+        <h3>Known vulns do the damage</h3>
+        <p>Attackers shop the public CVE list. Most exploited vulnerabilities were disclosed — and patched — long before the breach that used them.</p>
+      </div>
+      <div class="card reveal">
+        <div class="icon">🔥</div>
+        <h3>Log4Shell was the warning shot</h3>
+        <p>CVE-2021-44228 scored a perfect 10.0. One logging library buried three layers deep, and half the internet spent a weekend patching.</p>
+      </div>
+      <div class="card reveal">
+        <div class="icon">🧬</div>
+        <h3>100+ deps you never chose</h3>
+        <p>A typical Maven build pulls in a hundred transitive dependencies. You hand-picked maybe five. The other 95+ are attack surface on autopilot.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <h2>What it <span class="grad">finds</span></h2>
+    <p class="sub">Point it at a pom. Get an X-ray of your supply chain — scored, graded, and mapped to the fixes.</p>
+    <div class="grid">
+      <div class="card reveal">
+        <div class="icon">🛰️</div>
+        <h3>Live OSV.dev batch queries</h3>
+        <p>Every package@version goes out in <b>one batched query</b> against the live OSV.dev API. No key, no stale local CVE mirror — if it was published this morning, you'll see it this afternoon.</p>
+      </div>
+      <div class="card reveal">
+        <div class="icon">📊</div>
+        <h3>Risk score 0–100, graded A–F</h3>
+        <p>Severity-weighted scoring turns a CVE pile into <b>one number</b> you can track across builds — and a grade you can put on a dashboard.</p>
+      </div>
+      <div class="card reveal">
+        <div class="icon">🌡️</div>
+        <h3>Severity heatmap</h3>
+        <p>Your whole dependency list shaded by worst severity — a wall of red at the top, cool emerald where you're clean. The attack surface, at a glance.</p>
+      </div>
+      <div class="card reveal">
+        <div class="icon">🧾</div>
+        <h3>Per-dependency CVE table</h3>
+        <p>Every finding mapped back to its package: installed version, CVE id, CVSS severity, and the <b>fixed-in version</b> to upgrade to. No archaeology required.</p>
+      </div>
+      <div class="card reveal">
+        <div class="icon">🚦</div>
+        <h3>CI-friendly <code>--fail-on</code></h3>
+        <p>Gate the pipeline: <code>--fail-on high</code> exits non-zero the moment a high-or-worse finding appears. Levels: <code>critical | high | medium | low</code>.</p>
+      </div>
+      <div class="card reveal">
+        <div class="icon">🪶</div>
+        <h3>Zero dependencies, Java 17+</h3>
+        <p>Plain <code>javac</code>, the stdlib HTTP client, stdlib XML parsing. Nothing to audit in the auditor.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <h2>How it <span class="grad">works</span></h2>
+    <p class="sub">Pure JDK. No Maven, no Gradle, no dependencies.</p>
+    <div class="steps">
+      <div class="step reveal"><h3>parse pom</h3><p><code>java -jar vulnlens.jar pom.xml</code> — resolves declared and transitive dependencies down to exact versions from the Maven model.</p></div>
+      <div class="step reveal"><h3>batch-query OSV.dev</h3><p>One POST carries every package@version to the live OSV.dev API. A single round trip covers the whole tree.</p></div>
+      <div class="step reveal"><h3>score &amp; map</h3><p>Findings group by dependency, CVSS weights roll up into a 0–100 score and an A–F grade, severities paint the heatmap.</p></div>
+      <div class="step reveal"><h3>ship the report</h3><p>Self-contained <code>HTML</code> you can open anywhere, machine-readable <code>JSON</code> for CI, or plain <code>text</code> for the terminal purist.</p></div>
+    </div>
+  </section>
+
+  <section id="findings">
+    <h2>Sample <span class="grad">findings</span></h2>
+    <p class="sub">From the demo scan — every row links to the live OSV.dev advisory. These are real CVEs, real fix versions.</p>
+    <div class="table-wrap reveal">
+      <table>
+        <thead>
+          <tr><th>Package</th><th>Version</th><th>CVE</th><th>Severity</th><th>Fix →</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="pkg">log4j-core</td><td class="ver">2.14.1</td>
+            <td class="cve"><a href="https://osv.dev/vulnerability/CVE-2021-44228" target="_blank" rel="noopener">CVE-2021-44228</a></td>
+            <td><span class="sev critical">CRITICAL 10.0</span></td>
+            <td class="fix">→ 2.17.1</td>
+          </tr>
+          <tr>
+            <td class="pkg">commons-text</td><td class="ver">1.9</td>
+            <td class="cve"><a href="https://osv.dev/vulnerability/CVE-2022-42889" target="_blank" rel="noopener">CVE-2022-42889</a></td>
+            <td><span class="sev critical">CRITICAL 9.8</span></td>
+            <td class="fix">→ 1.10.0</td>
+          </tr>
+          <tr>
+            <td class="pkg">spring-webmvc</td><td class="ver">5.2.0.RELEASE</td>
+            <td class="cve"><a href="https://osv.dev/vulnerability/CVE-2022-22965" target="_blank" rel="noopener">CVE-2022-22965</a></td>
+            <td><span class="sev critical">CRITICAL 9.8</span></td>
+            <td class="fix">→ 5.2.20.RELEASE</td>
+          </tr>
+          <tr>
+            <td class="pkg">struts2-core</td><td class="ver">2.3.24</td>
+            <td class="cve"><a href="https://osv.dev/vulnerability/CVE-2017-5638" target="_blank" rel="noopener">CVE-2017-5638</a></td>
+            <td><span class="sev critical">CRITICAL 10.0</span></td>
+            <td class="fix">→ 2.3.32</td>
+          </tr>
+          <tr>
+            <td class="pkg">commons-collections</td><td class="ver">3.2.1</td>
+            <td class="cve"><a href="https://osv.dev/vulnerability/CVE-2015-7501" target="_blank" rel="noopener">CVE-2015-7501</a></td>
+            <td><span class="sev critical">CRITICAL 9.8</span></td>
+            <td class="fix">→ 3.2.2</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <a class="report-link" href="sample-report.html">Open the full interactive sample report →</a>
+  </section>
+
+  <section id="run">
+    <h2>Run <span class="grad">it</span></h2>
+    <p class="sub">Java 17+, one jar, no install. Flags: <code>--format html|json|text</code>, <code>--output</code>, <code>--fail-on critical|high|medium|low</code>, <code>--no-color</code>, <code>--timeout</code>, <code>--quiet</code>.</p>
+    <div class="codeblock reveal"><button class="copy" id="copyBtn">Copy</button><pre><code id="runCode"><span class="t-dim"># build from source (plain javac — no build tool needed)</span>
+./build.sh
+
+<span class="t-dim"># scan a project</span>
+java -jar build/vulnlens.jar path/to/pom.xml
+
+<span class="t-dim"># machine-readable output, and fail the build on high-or-worse</span>
+java -jar build/vulnlens.jar path/to/pom.xml --format json
+java -jar build/vulnlens.jar path/to/pom.xml --fail-on high</code></pre></div>
+  </section>
+
+  <footer>
+    <p>Data: <a href="https://osv.dev" target="_blank" rel="noopener">OSV.dev</a> · Built by Jude Davies · <a href="https://github.com/judd69/vulnlens" target="_blank" rel="noopener">github.com/judd69/vulnlens</a></p>
+    <p class="arc">Day 6 of shipping one project every day. AIGuard audits your code, JarLens audits your jars, CinderLens audits your speed, RepoScope audits your repos — VulnLens audits your supply chain.</p>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* reveal on scroll */
+  var els = document.querySelectorAll(".reveal");
+  if ("IntersectionObserver" in window && !reduce) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.12 });
+    els.forEach(function (el) { io.observe(el); });
+  } else {
+    els.forEach(function (el) { el.classList.add("in"); });
+  }
+
+  /* risk gauge: needle sweeps to 87, number counts up */
+  var SCORE = 87;
+  var needle = document.getElementById("needle");
+  var gtext = document.getElementById("gaugeText");
+  var arc = document.getElementById("gaugeArc");
+  var L = arc.getTotalLength();
+  arc.style.strokeDasharray = String(L);
+  function render(p) { /* p: 0..1 fraction of score */
+    var score = SCORE * p;
+    var ang = Math.PI - (score / 100) * Math.PI;   // 180° (left, 0) → 0° (right, 100)
+    var cx = 105, cy = 104, r = 62;
+    needle.setAttribute("x2", (cx + r * Math.cos(ang)).toFixed(1));
+    needle.setAttribute("y2", (cy - r * Math.sin(ang)).toFixed(1));
+    gtext.textContent = Math.round(score) + "/100";
+    arc.style.strokeDashoffset = String(L * (1 - score / 100));
+  }
+  var term = document.getElementById("heroTerminal");
+  var scan = document.getElementById("scanline");
+  var started = false;
+  function startGauge() {
+    if (started) return; started = true;
+    scan.classList.remove("run"); void scan.offsetWidth;
+    if (!reduce) scan.classList.add("run");
+    if (reduce) { render(1); return; }
+    var t0 = performance.now(), dur = 1400;
+    (function tick(now) {
+      var p = Math.min(1, (now - t0) / dur);
+      var e = 1 - Math.pow(1 - p, 3);
+      render(e);
+      if (p < 1) requestAnimationFrame(tick);
+    })(t0);
+  }
+  if ("IntersectionObserver" in window) {
+    var gio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { startGauge(); gio.disconnect(); } });
+    }, { threshold: 0.35 });
+    gio.observe(term);
+  } else { startGauge(); }
+
+  /* copy button */
+  var copyBtn = document.getElementById("copyBtn");
+  copyBtn.addEventListener("click", function () {
+    var txt = document.getElementById("runCode").innerText;
+    function done() { copyBtn.textContent = "Copied ✓"; setTimeout(function(){ copyBtn.textContent = "Copy"; }, 1600); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(done, done);
+    } else {
+      var ta = document.createElement("textarea");
+      ta.value = txt; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(ta); done();
+    }
+  });
+})();
+</script>
+</body>
+</html>
